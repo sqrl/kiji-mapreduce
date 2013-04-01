@@ -1,8 +1,30 @@
+/**
+ * (c) Copyright 2013 WibiData, Inc.
+ *
+ * See the NOTICE file distributed with this work for additional
+ * information regarding copyright ownership.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.kiji.mapreduce.kvstore.lib;
 
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.lang.SerializationUtils;
 
 import org.kiji.annotations.ApiAudience;
 import org.kiji.annotations.ApiStability;
@@ -20,7 +42,7 @@ import org.kiji.mapreduce.kvstore.framework.KeyValueStoreConfiguration;
  * example.)</p>
  *
  * <p>Since the entire contents of the map will be stored in the job's
- * Configuration and copied to all tasks and kept in memory it is not
+ * Configuration, copied to all tasks and kept in memory it is not
  * recommended that this class be used for very large amounts of data.</p>
  * 
  * <p>To create a InMemoryMapKeyValueStore you should use {@link builder()}.
@@ -36,11 +58,10 @@ import org.kiji.mapreduce.kvstore.framework.KeyValueStoreConfiguration;
 @ApiAudience.Public
 @ApiStability.Evolving
 public final class InMemoryMapKeyValueStore implements KeyValueStore<String, String> {
-  private static final String CONF_MAP_KEYS = "map.keys";
-  private static final String CONF_MAP_VALUES = "map.values";
+  private static final String CONF_MAP = "map";
 
   /** The map pulled out of the Configuration object. */
-  private Map<String, String> mMap;
+  private HashMap<String, String> mMap;
 
   /** true if the user has called open() on this object. */
   private boolean mOpened;
@@ -102,7 +123,7 @@ public final class InMemoryMapKeyValueStore implements KeyValueStore<String, Str
    * by a map.
    */
   public InMemoryMapKeyValueStore() {
-    this(builder());
+    mMap = new HashMap<String, String>();
   }
 
   /**
@@ -122,7 +143,7 @@ public final class InMemoryMapKeyValueStore implements KeyValueStore<String, Str
    * @param map the map containing the data for the InMemoryMapKeyValueStore.
    * @return An InMemoryMapKeyValueStore instance.
    */
-  public InMemoryMapKeyValueStore get(Map<String, String> map) {
+  public static InMemoryMapKeyValueStore get(Map<String, String> map) {
     return builder().withMap(map).build();
   }
 
@@ -131,20 +152,52 @@ public final class InMemoryMapKeyValueStore implements KeyValueStore<String, Str
     if (null == mMap) {
       throw new IOException("Required attribute not set: map");
     }
-    conf.
-    conf.setStrings(name, values)
+    conf.set(CONF_MAP, Base64.encodeBase64String(SerializationUtils.serialize(mMap)));
   }
 
+  @SuppressWarnings("unchecked")
   @Override
   public void initFromConf(KeyValueStoreConfiguration conf) throws IOException {
-    // TODO Auto-generated method stub
-    
+    if (mOpened) {
+      throw new IllegalStateException("Cannot reinitialize; already opened.");
+    }
+    mMap = (HashMap<String, String>) SerializationUtils
+        .deserialize(Base64.decodeBase64(conf.get(CONF_MAP)));
   }
 
   @Override
   public KeyValueStoreReader<String, String> open() throws IOException {
-    // TODO Auto-generated method stub
-    return null;
+    mOpened = true;
+    return new Reader();
   }
 
+  /**
+   * A very simple KVStore Reader. It simply wraps access to the mMap of the
+   * outer class's mMap. Because of this, its {@link close()} and {@link isOpen}
+   * methods are somewhat inane.
+   */
+  @ApiAudience.Private
+  private final class Reader implements KeyValueStoreReader<String, String> {
+    /** Private constructor. */
+    private Reader() { }
+
+    @Override
+    public void close() throws IOException {
+    }
+
+    @Override
+    public String get(String key) throws IOException {
+      return mMap.get(key);
+    }
+
+    @Override
+    public boolean containsKey(String key) throws IOException {
+      return mMap.containsKey(key);
+    }
+
+    @Override
+    public boolean isOpen() {
+      return true;
+    }
+  }
 }
