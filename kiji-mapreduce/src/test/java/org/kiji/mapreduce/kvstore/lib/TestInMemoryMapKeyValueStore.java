@@ -11,7 +11,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import org.kiji.mapreduce.KijiMRTestLayouts;
-import org.kiji.mapreduce.MapReduceJob;
+import org.kiji.mapreduce.KijiMapReduceJob;
 import org.kiji.mapreduce.kvstore.KeyValueStore;
 import org.kiji.mapreduce.kvstore.KeyValueStoreReader;
 import org.kiji.mapreduce.kvstore.RequiredStores;
@@ -29,25 +29,20 @@ import org.kiji.schema.layout.KijiTableLayout;
 import org.kiji.schema.util.InstanceBuilder;
 
 public class TestInMemoryMapKeyValueStore extends KijiClientTest {
+  /** Number of entries in our large KV Store. */
+  private final static int LARGE_KV_SIZE = 1024;
+
   /**
    * Producer designed to test kvstores. It doesn't actually read any data from the table.
    */
   public static class TestingProducer extends KijiProducer {
-    /** Number of entries in our large KV Store. */
-    private final static int LARGE_KV_SIZE = 1024;
 
     @Override
     public Map<String, KeyValueStore<?, ?>> getRequiredStores() {
-      // A small map whose value will be checked.
-      Map<String, String> smallMap = new HashMap<String, String>();
-      smallMap.put("lorem", "ipsum");
-      // A larger map to ensure that we can safely encode non-trivial amounts of data.
-      Map<String, String> largeMap = new HashMap<String, String>(LARGE_KV_SIZE);
-      for (int i = 0; i < LARGE_KV_SIZE; i++) {
-        largeMap.put(Integer.toString(i), Integer.toString(i));
-      }
-      return RequiredStores.with("small", InMemoryMapKeyValueStore.get(smallMap))
-          .with("large", InMemoryMapKeyValueStore.get(largeMap));
+      // We'll use UnconfiguredKeyValueStores, the real ones being
+      // set by the job builder.
+      return RequiredStores.with("small", UnconfiguredKeyValueStore.get())
+          .with("large", UnconfiguredKeyValueStore.get());
     }
 
     @Override
@@ -64,19 +59,15 @@ public class TestInMemoryMapKeyValueStore extends KijiClientTest {
     @Override
     public void produce(KijiRowData input, ProducerContext context) throws IOException {
       // Ignore the input. Just retrieve our kv stores and confirm their contents.
-      try {
-        KeyValueStoreReader<String, String> smallStore = context.getStore("small");
-        assertEquals("Small store contains incorrect.", "ipsum", smallStore.get("lorem"));
-        KeyValueStoreReader<String, String> largeStore = context.getStore("large");
-        for (int i = 0; i < LARGE_KV_SIZE; i++) {
-          assertEquals("Large store contains incorrect value.",
-              Integer.toString(i), largeStore.get(Integer.toString(i)));
-        }
-        smallStore.close();
-        largeStore.close();
-      } catch (InterruptedException e) {
-        throw new IOException("Interrupted while retrieving stores!", e);
+      KeyValueStoreReader<String, String> smallStore = context.getStore("small");
+      assertEquals("Small store contains incorrect.", "ipsum", smallStore.get("lorem"));
+      KeyValueStoreReader<String, String> largeStore = context.getStore("large");
+      for (int i = 0; i < LARGE_KV_SIZE; i++) {
+        assertEquals("Large store contains incorrect value.",
+            Integer.toString(i), largeStore.get(Integer.toString(i)));
       }
+      smallStore.close();
+      largeStore.close();
       // Write some data back to the table so we can be sure the producer ran.
       context.put("lorem");
     }
@@ -99,14 +90,29 @@ public class TestInMemoryMapKeyValueStore extends KijiClientTest {
         .build();
   }
 
+  /**
+   * A test that makes sure a producer can use this kvstore when it's
+   * set-up by a job builder.
+   */
   @Test
   public void testProducer() throws Exception {
+    // Create some maps for KV stores for this test.
+    // A small map whose value will be checked.
+    final Map<String, String> smallMap = new HashMap<String, String>();
+    smallMap.put("lorem", "ipsum");
+    // A larger map to ensure that we can safely encode non-trivial amounts of data.
+    final Map<String, String> largeMap = new HashMap<String, String>(LARGE_KV_SIZE);
+    for (int i = 0; i < LARGE_KV_SIZE; i++) {
+      largeMap.put(Integer.toString(i), Integer.toString(i));
+    }
     final KijiURI tableURI = KijiURI.newBuilder(getKiji().getURI()).withTableName("test").build();
-    final MapReduceJob job = KijiProduceJobBuilder.create()
+    final KijiMapReduceJob job = KijiProduceJobBuilder.create()
         .withConf(getConf())
         .withProducer(TestingProducer.class)
         .withInputTable(tableURI)
         .withOutput(new DirectKijiTableMapReduceJobOutput(tableURI))
+        .withStore("small", InMemoryMapKeyValueStore.get(smallMap))
+        .withStore("large", InMemoryMapKeyValueStore.get(largeMap))
         .build();
     // Be sure the job runs successfully and to completion.
     // If the producer finishes, the first_name of the main row will be changed to "lorem".
@@ -120,6 +126,24 @@ public class TestInMemoryMapKeyValueStore extends KijiClientTest {
         "lorem", value);
     reader.close();
     table.release();
+  }
+
+  @Test
+  public void testNonSerializableTypes() throws Exception {
+    /** A simple class which is not serializable. Wraps a String. */
+    final class NotSerialized {
+      private String mContent;
+
+      private NotSerialized(String content) {
+        mContent = content;
+      }
+    }
+    final Map<String, NotSerialized> map = new HashMap<String, NotSerialized>();
+    map.put("lorem", new NotSerialized("ipsum"));
+    final InMemoryMapKeyValueStore<String, NotSerialized> kvStore =
+        InMemoryMapKeyValueStore.get(map);
+    final KeyValueStoreReader<String, NotSerialized> reader = kvStore.open();
+    assertEquals("ipsum", reader.get("lorem"));
   }
 }
 
