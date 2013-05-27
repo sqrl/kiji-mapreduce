@@ -2,11 +2,14 @@ package org.kiji.mapreduce.kvstore.lib;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.commons.lang.SerializationException;
+import org.apache.hadoop.conf.Configuration;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -15,6 +18,7 @@ import org.kiji.mapreduce.KijiMapReduceJob;
 import org.kiji.mapreduce.kvstore.KeyValueStore;
 import org.kiji.mapreduce.kvstore.KeyValueStoreReader;
 import org.kiji.mapreduce.kvstore.RequiredStores;
+import org.kiji.mapreduce.kvstore.framework.KeyValueStoreConfiguration;
 import org.kiji.mapreduce.output.DirectKijiTableMapReduceJobOutput;
 import org.kiji.mapreduce.produce.KijiProduceJobBuilder;
 import org.kiji.mapreduce.produce.KijiProducer;
@@ -130,20 +134,40 @@ public class TestInMemoryMapKeyValueStore extends KijiClientTest {
 
   @Test
   public void testNonSerializableTypes() throws Exception {
-    /** A simple class which is not serializable. Wraps a String. */
-    final class NotSerialized {
-      private String mContent;
-
-      private NotSerialized(String content) {
-        mContent = content;
-      }
-    }
+    /** A simple class which is not serializable. */
+    final class NotSerialized { }
     final Map<String, NotSerialized> map = new HashMap<String, NotSerialized>();
-    map.put("lorem", new NotSerialized("ipsum"));
+    map.put("lorem", new NotSerialized());
     final InMemoryMapKeyValueStore<String, NotSerialized> kvStore =
         InMemoryMapKeyValueStore.get(map);
-    final KeyValueStoreReader<String, NotSerialized> reader = kvStore.open();
-    assertEquals("ipsum", reader.get("lorem"));
+    final Configuration conf = new Configuration(false);
+    final KeyValueStoreConfiguration kvConf = KeyValueStoreConfiguration.fromConf(conf);
+    try {
+      kvStore.storeToConf(kvConf);
+      fail("Should have thrown a SerializationException");
+    } catch (SerializationException se) {
+      assertEquals(
+          "InMemoryKeyValueStore requires that its keys and values are primitives or Serializable",
+          se.getMessage());
+    }
+  }
+
+  @Test
+  public void simpleKVStoreTest() throws Exception {
+    // Make a store and serialize it.
+    final Map<String, Integer> map = new HashMap<String, Integer>();
+    map.put("one", 1);
+    final InMemoryMapKeyValueStore<String, Integer> kvStore = InMemoryMapKeyValueStore.get(map);
+    final Configuration conf = new Configuration(false);
+    final KeyValueStoreConfiguration kvConf = KeyValueStoreConfiguration.fromConf(conf);
+    kvStore.storeToConf(kvConf);
+
+    // Deserialize the store and read the value back.
+    final InMemoryMapKeyValueStore<String, Integer> outKvStore =
+        new InMemoryMapKeyValueStore<String, Integer>();
+    outKvStore.initFromConf(kvConf);
+    final KeyValueStoreReader<String, Integer> reader = outKvStore.open();
+    assertTrue("Couldn't deserialize correct value!", 1 == reader.get("one"));
   }
 }
 

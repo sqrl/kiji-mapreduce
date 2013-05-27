@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.lang.SerializationException;
 import org.apache.commons.lang.SerializationUtils;
 
 import org.kiji.annotations.ApiAudience;
@@ -47,9 +48,9 @@ import org.kiji.mapreduce.kvstore.framework.KeyValueStoreConfiguration;
  * Configuration, copied to all tasks, and held in memory it is not
  * recommended that this class be used for very large amounts of data.</p>
  *
- * <p>Ideally, the key and value types of this key value store should be Java
- * primitives if possible. If not primitives, they must be
- * {@link java.io.Serializable}.</p>
+ * <p>The key and value types of this key value store must be
+ * {@link java.io.Serializable}. Ideally, they should be Java primitive wrappers
+ * (e.g. Integer), Strings, or other small objects.</p>
  *
  * <p>To create a InMemoryMapKeyValueStore you should use {@link builder()}.
  * This class has one method,
@@ -71,10 +72,8 @@ import org.kiji.mapreduce.kvstore.framework.KeyValueStoreConfiguration;
  * immediately and no modifications made to it after the call to get() will be
  * reflected in the InMemoryMapKeyValueStore.</p>
  *
- * @param <K> The type of the key field. Should be a Java primitive or implement
- * {@link java.io.Serializable}.
- * @param <V> The type of the value field. Should be a Java primitive or implement
- * {@link java.io.Serializable}.
+ * @param <K> The type of the key field. Should implement {@link java.io.Serializable}.
+ * @param <V> The type of the value field. Should implement {@link java.io.Serializable}.
  */
 @ApiAudience.Public
 @ApiStability.Evolving
@@ -172,7 +171,14 @@ public final class InMemoryMapKeyValueStore<K, V> implements KeyValueStore<K, V>
     if (null == mMap) {
       throw new IOException("Required attribute not set: map");
     }
-    conf.set(CONF_MAP, Base64.encodeBase64String(SerializationUtils.serialize(mMap)));
+    try {
+      conf.set(CONF_MAP, Base64.encodeBase64String(SerializationUtils.serialize(mMap)));
+    } catch (SerializationException se) {
+      // Throw a more helpful error message for the user.
+      throw new SerializationException(
+          "InMemoryKeyValueStore requires that its keys and values are primitives or Serializable",
+          se);
+    }
   }
 
   @SuppressWarnings("unchecked")
